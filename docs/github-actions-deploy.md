@@ -2,6 +2,8 @@
 
 This is the cleaner repeatable path after the first local build works. It uses GitHub Actions plus Azure OpenID Connect (OIDC), so you do not store an Azure client secret in GitHub.
 
+This workflow uses repository-level secrets and repository-level variables. It does not use a GitHub Actions environment.
+
 References:
 
 - Azure Login recommends OIDC authentication and requires `permissions: id-token: write` in the workflow.
@@ -13,7 +15,6 @@ Run these commands locally from PowerShell. Replace placeholders before running.
 
 ```powershell
 $subscriptionId = "<your-subscription-id>"
-$resourceGroup = "rg-azure-billing-dashboard"
 $appName = "github-azure-billing-dashboard"
 $githubOrgOrUser = "<your-github-user>"
 $githubRepo = "azure-billing-dashboard"
@@ -24,43 +25,31 @@ az account set --subscription $subscriptionId
 $app = az ad app create --display-name $appName | ConvertFrom-Json
 $clientId = $app.appId
 
-$sp = az ad sp create --id $clientId | ConvertFrom-Json
+az ad sp create --id $clientId | Out-Null
 
 az role assignment create `
   --assignee $clientId `
   --role Contributor `
   --scope "/subscriptions/$subscriptionId"
 
-$mainCredentialPath = "$env:TEMP\github-main-federated-credential.json"
-$environmentCredentialPath = "$env:TEMP\github-environment-federated-credential.json"
+$credentialPath = "$env:TEMP\github-main-federated-credential.json"
 
 @{
   name = "github-main"
   issuer = "https://token.actions.githubusercontent.com"
   subject = "repo:$githubOrgOrUser/$githubRepo:ref:refs/heads/main"
   audiences = @("api://AzureADTokenExchange")
-} | ConvertTo-Json | Set-Content -LiteralPath $mainCredentialPath -NoNewline
-
-@{
-  name = "github-environment"
-  issuer = "https://token.actions.githubusercontent.com"
-  subject = "repo:$githubOrgOrUser/$githubRepo:environment:azure-demo"
-  audiences = @("api://AzureADTokenExchange")
-} | ConvertTo-Json | Set-Content -LiteralPath $environmentCredentialPath -NoNewline
+} | ConvertTo-Json | Set-Content -LiteralPath $credentialPath -NoNewline
 
 az ad app federated-credential create `
   --id $clientId `
-  --parameters "@$mainCredentialPath"
+  --parameters "@$credentialPath"
 
-az ad app federated-credential create `
-  --id $clientId `
-  --parameters "@$environmentCredentialPath"
-
-az ad app show --id $clientId --query "{clientId:appId, tenantId:publisherDomain}" --output json
+az ad app show --id $clientId --query "{clientId:appId}" --output json
 az account show --query "{subscriptionId:id, tenantId:tenantId}" --output json
 ```
 
-Use the final `tenantId`, `subscriptionId`, and `$clientId` values in GitHub.
+Use the final `clientId`, `tenantId`, and `subscriptionId` values in GitHub.
 
 ## GitHub Repository Settings
 
@@ -79,7 +68,7 @@ Create these repository variables:
 - `BUDGET_END_DATE`, for example `2036-06-30T00:00:00Z`
 - `MONTHLY_BUDGET_AMOUNT`, for example `2.6`
 
-Create an environment named `azure-demo`. For a more controlled flow, add required reviewers to that environment.
+Because the workflow does not set `environment:`, only repository-level variables and secrets are required. If you later add a GitHub environment for approvals, you must also add a matching Azure federated credential subject such as `repo:<owner>/<repo>:environment:<environment-name>`.
 
 ## Run the Deployment
 
@@ -93,7 +82,8 @@ The workflow will:
 
 - authenticate to Azure with OIDC
 - run Terraform
-- refresh Cost Management data
+- export the resource group and storage account from Terraform outputs
+- refresh Cost Management data, with fallback static data if Cost Management is unsupported
 - build the React app
 - upload `dist` to Azure Storage static website hosting
 
