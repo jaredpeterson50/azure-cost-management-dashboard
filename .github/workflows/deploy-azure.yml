@@ -47,6 +47,8 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
 
       - name: Terraform init
         run: terraform -chdir=infra init
@@ -57,15 +59,20 @@ jobs:
       - name: Terraform apply
         run: terraform -chdir=infra apply -auto-approve tfplan
 
-      - name: Export Terraform outputs
+      - name: Deploy static site
         shell: pwsh
         run: |
           $resourceGroup = terraform -chdir=infra output -raw resource_group_name
-          $storageAccount = terraform -chdir=infra output -raw storage_account_name
-          "AZURE_RESOURCE_GROUP=$resourceGroup" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "AZURE_STORAGE_ACCOUNT=$storageAccount" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "Terraform created resource group: $resourceGroup"
-          "Terraform created storage account: $storageAccount"
+          if ($LASTEXITCODE -ne 0 -or -not $resourceGroup) {
+            throw "Unable to read Terraform output: resource_group_name"
+          }
 
-      - name: Deploy static site
-        run: npm run deploy:azure
+          $storageAccount = terraform -chdir=infra output -raw storage_account_name
+          if ($LASTEXITCODE -ne 0 -or -not $storageAccount) {
+            throw "Unable to read Terraform output: storage_account_name"
+          }
+
+          "Terraform resource group: $resourceGroup"
+          "Terraform storage account: $storageAccount"
+
+          powershell -ExecutionPolicy Bypass -File scripts/deploy-static.ps1 -ResourceGroup $resourceGroup -StorageAccount $storageAccount
