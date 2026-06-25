@@ -1,0 +1,57 @@
+Terraform-Only Azure Cost Management App Deployment Guide
+Deploy with terraform and azure. Make sure you login with the default browser to github and azure.
+#1. Install Required Applications
+winget install --id Microsoft.AzureCLI -e
+winget install --id Hashicorp.Terraform -e
+winget install --id Git.Git -e
+winget install --id OpenJS.NodeJS.LTS -e
+winget install --id Microsoft.VisualStudioCode -e
+#2. Verify Installations Close and reopen PowerShell
+az --version
+terraform -version
+git --version
+node --version
+npm --version
+code --version
+#3. Login to Azure first in default browser then run
+az login --use-device-code
+#4. Clone the Repository
+git clone https://github.com/jaredpeterson50/azure-billing-dashboard.git
+cd azure-billing-dashboard
+#5. Install and Test the React App Locally
+npm install
+npm test
+npm run build
+#6. Create Terraform Variables File
+$SUBSCRIPTION_ID = az account show --query id -o tsv
+$STORAGE_ACCOUNT = Read-Host "Enter globally unique storage account name, example: azbilldash343233"
+$EMAIL = Read-Host "Enter budget notification email"
+$MONTHLY_BUDGET = Read-Host "Enter monthly budget amount, example: 2.5"
+@"
+subscription_id        = "$SUBSCRIPTION_ID"
+location               = "eastus"
+resource_group_name    = "rg-azure-billing-dashboard"
+storage_account_name   = "$STORAGE_ACCOUNT"
+budget_contact_emails  = ["$EMAIL"]
+budget_start_date      = "2026-06-01T00:00:00Z"
+budget_end_date        = "2036-06-30T00:00:00Z"
+monthly_budget_amount  = $MONTHLY_BUDGET
+"@ | Out-File -Encoding utf8 "infra/terraform.tfvars"
+#7. Validate Terraform
+terraform -chdir=infra init
+terraform -chdir=infra fmt
+terraform -chdir=infra validate
+terraform -chdir=infra plan
+terraform -chdir=infra apply
+#9. Pull budget data from azure then upload the React App to Azure Storage
+$STORAGE_ACCOUNT = terraform -chdir=infra output -raw storage_account_name
+npm run build:azure
+az storage blob upload-batch `
+  --account-name $STORAGE_ACCOUNT `
+  --destination '$web' `
+  --source dist `
+  --overwrite `
+  --auth-mode login
+#12. Destroy Resources When Finished
+terraform -chdir=infra destroy
+
